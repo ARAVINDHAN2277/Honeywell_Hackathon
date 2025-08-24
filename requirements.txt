@@ -1,0 +1,14 @@
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+networkx
+google-generativeai
+python-dotenv
+scikit-learn
+joblib
+ortools
+requests
+pytest
+flake8

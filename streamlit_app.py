@@ -9,6 +9,30 @@ import requests
 import os
 from datetime import datetime
 import networkx as nx
+import re
+import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load environment variables from .env (if present)
+load_dotenv()
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+    except Exception:
+        # configuration may fail in some environments; API calls will surface errors
+        pass
+
+
+def ask_gemini(query):
+    if not GEMINI_API_KEY:
+        return 'Gemini API key not configured. Place GEMINI_API_KEY in a .env file or environment.'
+    try:
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
+        response = model.generate_content(query)
+        return response.text if hasattr(response, 'text') else str(response)
+    except Exception as e:
+        return f"Gemini API error: {e}"
 
 # Import utilities
 import importlib.util
@@ -21,7 +45,7 @@ schedule_optimizer = importlib.util.module_from_spec(spec2)
 spec2.loader.exec_module(schedule_optimizer)
 
 st.set_page_config(page_title="Flight Ops Toolkit", layout="wide")
-st.title("Flight Operations Toolkit")
+st.title("Flight Schedule Optimization")
 
 # Helper: load schedule from upload or default
 def load_schedule(uploaded_file=None):
@@ -51,6 +75,62 @@ def load_schedule(uploaded_file=None):
     df = df.copy()
     # normalize column names
     df.columns = [c.strip() for c in df.columns]
+
+    # Extract tail registration into a canonical 'tail_number' column when possible.
+    # Handles values like: "A20N (VT-EXU)" -> tail_number = "VT-EXU"
+    try:
+        tail_source = None
+        for c in df.columns:
+            cl = c.lower()
+            if 'tail' in cl or 'registration' in cl or 'aircraft' in cl or 'reg' in cl:
+                tail_source = c
+                break
+        if tail_source:
+            def extract_tail(val):
+                try:
+                    if pd.isna(val):
+                        return ''
+                    s = str(val).strip()
+                    m = re.search(r"\(([^)]+)\)", s)
+                    if m:
+                        return m.group(1).strip()
+                    # if format like "A20N - VT-EXU" or "A20N VT-EXU"
+                    parts = re.split(r"[-\s]+", s)
+                    # look for part with dash like VT-EXU or starting with VT
+                    for p in parts[::-1]:
+                        if re.match(r"^[A-Z]{2}-?[A-Z0-9]+$", p.upper()):
+                            return p.strip()
+                    return s
+                except Exception:
+                    return ''
+            df['tail_number'] = df[tail_source].apply(extract_tail)
+        else:
+            # ensure column exists so downstream code can rely on it
+            if 'tail_number' not in df.columns:
+                df['tail_number'] = ''
+    except Exception:
+        if 'tail_number' not in df.columns:
+            df['tail_number'] = ''
+
+    # Ensure there is a 'callsign' column. Try common column names, else build a fallback.
+    try:
+        callsign_source = None
+        for c in df.columns:
+            cl = c.lower()
+            if cl in ('callsign','flight','flight_no','flightno','flight_number','number','flightnum','flt') or 'callsign' in cl or 'flight' in cl:
+                callsign_source = c
+                break
+        if callsign_source:
+            df['callsign'] = df[callsign_source].astype(str)
+        else:
+            # fallback: use tail_number + index or index alone
+            if 'tail_number' in df.columns and df['tail_number'].notna().any():
+                df['callsign'] = df['tail_number'].astype(str) + '-' + df.index.astype(str)
+            else:
+                df['callsign'] = df.index.astype(str)
+    except Exception:
+        if 'callsign' not in df.columns:
+            df['callsign'] = df.index.astype(str)
 
     # If Date and STD/STA columns exist
     def combine_date_time(row, date_col, time_col):
@@ -131,6 +211,41 @@ else:
 if schedule_df is None:
     st.stop()
 
+# --- NLP Query Interface (top of dashboard) ---
+st.markdown('## Ask a question')
+
+query = st.text_input('Chat: ask anything about flight operations, schedule, delays, or analytics:')
+if query:
+    q = query.lower()
+    rule_based_answer = None
+    # Rule-based: best time to takeoff/depart
+    if ('best' in q and ('depart' in q or 'takeoff' in q)) or ('best time' in q and ('depart' in q or 'takeoff' in q)):
+        if 'sched_dep' in schedule_df.columns and 'actual_dep' in schedule_df.columns:
+            schedule_df['dep_delay'] = (schedule_df['actual_dep'] - schedule_df['sched_dep']).dt.total_seconds() / 60
+            if schedule_df['dep_delay'].notna().any():
+                schedule_df['dep_hour'] = schedule_df['sched_dep'].dt.hour
+                avg_dep = schedule_df.groupby('dep_hour')['dep_delay'].mean().reset_index()
+                best_row = avg_dep.loc[avg_dep['dep_delay'].idxmin()]
+                fig, ax = plt.subplots(figsize=(8,3))
+                sns.lineplot(x='dep_hour', y='dep_delay', data=avg_dep, marker='o', ax=ax)
+                ax.set_xlabel('Scheduled departure hour')
+                ax.set_ylabel('Average departure delay (min)')
+                st.pyplot(fig)
+                rule_based_answer = f"Best time to depart (lowest avg delay): {int(best_row['dep_hour']):02d}:00 with average delay {best_row['dep_delay']:.1f} min."
+            else:
+                rule_based_answer = 'Not enough actual departure times to compute delays.'
+        else:
+            rule_based_answer = 'Not enough actual/scheduled departure times to compute best time.'
+    # Add more rule-based answers here as needed
+
+    if rule_based_answer:
+        st.markdown('Answer:')
+        st.write(rule_based_answer)
+    else:
+        st.markdown(' Answer:')
+        answer = ask_gemini(query)
+        st.write(answer)
+
 # Tabs
 tabs = st.tabs(['Overview','Busiest slots','Best time','Delay predictor','Cascade','Optimizer'])
 
@@ -160,10 +275,11 @@ with tabs[1]:
         schedule_df['hour'] = schedule_df['sched_dep'].dt.hour
         heat = schedule_df.groupby(['hour']).size()
         fig, ax = plt.subplots(figsize=(8,3))
-        sns.barplot(x=heat.index, y=heat.values, ax=ax, palette='rocket')
-        ax.set_xlabel('Hour of day')
-        ax.set_ylabel('Movements')
-        st.pyplot(fig)
+    # Fix seaborn FutureWarning: assign hue and legend
+    sns.barplot(x=heat.index, y=heat.values, ax=ax, palette='rocket', hue=heat.index, legend=False)
+    ax.set_xlabel('Hour of day')
+    ax.set_ylabel('Movements')
+    st.pyplot(fig)
 
 # Best time
 with tabs[2]:
