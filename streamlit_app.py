@@ -308,7 +308,7 @@ with tabs[2]:
         ax.set_ylabel('Average departure delay (min)')
         st.pyplot(fig)
     else:
-        st.info('Not enough actual departure times to compute delays.')
+        st.info('Not enough actual departure times to compute delays. (Upload your CSV/Excel for real results)')
 
 # Delay predictor (enhanced from predict_ui.py)
 with tabs[3]:
