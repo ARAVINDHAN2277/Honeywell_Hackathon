@@ -239,7 +239,7 @@ if query:
                 st.pyplot(fig)
                 rule_based_answer = f"Best time to depart (lowest avg delay): {int(best_row['dep_hour']):02d}:00 with average delay {best_row['dep_delay']:.1f} min."
             else:
-                rule_based_answer = 'Not enough actual departure times to compute delays.'
+                rule_based_answer = 'Not enough actual departure times to compute delays. (Upload your CSV/Excel for real results)'
         else:
             rule_based_answer = 'Not enough actual/scheduled departure times to compute best time.'
     # Add more rule-based answers here as needed
