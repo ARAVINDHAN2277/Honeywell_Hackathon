@@ -28,8 +28,14 @@ def ask_gemini(query):
     if not GEMINI_API_KEY:
         return 'Gemini API key not configured. Place GEMINI_API_KEY in a .env file or environment.'
     try:
+         instruction = (
+            "You are a Flight Operations Assistant. ONLY answer questions strictly related to flights, airports, schedules, "
+            "delays, slot congestion, turnaround, cascading impact, or schedule optimization. If the user's question is outside "
+            "these topics, reply exactly: 'Irrelevant question: out of project scope.' Do not provide general travel advice or any "
+            "other unrelated content.\n\nUser question: " + query
+        )
         model = genai.GenerativeModel('models/gemini-1.5-flash')
-        response = model.generate_content(query)
+        response = model.generate_content(instruction)
         return response.text if hasattr(response, 'text') else str(response)
     except Exception as e:
         return f"Gemini API error: {e}"
