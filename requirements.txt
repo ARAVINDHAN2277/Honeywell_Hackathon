@@ -12,3 +12,5 @@ ortools
 requests
 pytest
 flake8
+openpyxl
+xlrd
