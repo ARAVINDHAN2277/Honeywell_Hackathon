@@ -241,7 +241,7 @@ if query:
             else:
                 rule_based_answer = 'Not enough actual departure times to compute delays. (Upload your CSV/Excel for real results)'
         else:
-            rule_based_answer = 'Not enough actual/scheduled departure times to compute best time.'
+            rule_based_answer = 'Not enough actual/scheduled departure times to compute best time. (Upload your CSV/Excel for real results)'
     # Add more rule-based answers here as needed
 
     if rule_based_answer:
